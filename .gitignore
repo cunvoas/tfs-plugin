@@ -1,0 +1,17 @@
+*.class
+
+# Package Files #
+*.jar
+*.war
+*.ear
+
+# Eclipse #
+.project
+.classpath
+.settings
+
+# TFS exclision #
+.tpignore
+
+# Maven #
+target

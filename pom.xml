@@ -13,7 +13,8 @@
   <version>1.21-SNAPSHOT</version>
   <url>http://wiki.jenkins-ci.org/display/JENKINS/Team+Foundation+Server+Plugin</url>
   <licenses>
-    <license><name>MIT license</name><comments>All source code is under the MIT license.</comments></license>
+    <license><name>MIT license</name>
+    <comments>All source code is under the MIT license.</comments></license>
   </licenses>
 
   <developers>
@@ -23,11 +24,18 @@
       <email>eramfelt@gmail.com</email>
       <timezone>+1</timezone>
     </developer>
+    <developer>
+      <id>cunvoas</id>
+      <name>Christophe UNVOAS</name>
+      <email>christophe.unvoas@gmail.com</email>
+      <timezone>+1</timezone>
+    </developer>
   </developers>
+  
   <scm>
     <connection>scm:git:ssh://github.com/jenkinsci/tfs-plugin.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/jenkinsci/tfs-plugin.git</developerConnection>
-  </scm>
+  </scm> 
 
   <distributionManagement>
     <repository>
@@ -35,6 +43,7 @@
       <url>http://maven.jenkins-ci.org:8081/content/repositories/releases/</url>
     </repository>
   </distributionManagement>
+
 
   <!-- see http://groups.google.com/group/hudson-dev/browse_thread/thread/83e34c639eec470a for the rationale behind this -->
   <build>
@@ -105,6 +114,7 @@
             <url>http://repo.jenkins-ci.org/public/</url>
         </pluginRepository>
     </pluginRepositories>
+
 </project>  
   
 

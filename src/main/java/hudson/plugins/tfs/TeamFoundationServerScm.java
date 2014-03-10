@@ -1,6 +1,38 @@
 package hudson.plugins.tfs;
 
 import static hudson.Util.fixEmpty;
+import hudson.AbortException;
+import hudson.Extension;
+import hudson.FilePath;
+import hudson.Launcher;
+import hudson.Util;
+import hudson.model.BuildListener;
+import hudson.model.TaskListener;
+import hudson.model.AbstractBuild;
+import hudson.model.AbstractProject;
+import hudson.model.Computer;
+import hudson.model.Node;
+import hudson.model.ParametersAction;
+import hudson.model.Run;
+import hudson.plugins.tfs.actions.CheckoutAction;
+import hudson.plugins.tfs.actions.RemoveWorkspaceAction;
+import hudson.plugins.tfs.browsers.TeamFoundationServerRepositoryBrowser;
+import hudson.plugins.tfs.commands.ServerConfigurationProvider;
+import hudson.plugins.tfs.model.ChangeSet;
+import hudson.plugins.tfs.model.Project;
+import hudson.plugins.tfs.model.Server;
+import hudson.plugins.tfs.model.WorkspaceConfiguration;
+import hudson.plugins.tfs.util.BuildVariableResolver;
+import hudson.plugins.tfs.util.BuildWorkspaceConfigurationRetriever;
+import hudson.plugins.tfs.util.BuildWorkspaceConfigurationRetriever.BuildWorkspaceConfiguration;
+import hudson.scm.ChangeLogParser;
+import hudson.scm.RepositoryBrowsers;
+import hudson.scm.SCMDescriptor;
+import hudson.scm.SCM;
+import hudson.util.FormValidation;
+import hudson.util.LogTaskListener;
+import hudson.util.Scrambler;
+import hudson.util.ListBoxModel;
 
 import java.io.File;
 import java.io.IOException;
@@ -15,46 +47,19 @@ import java.util.regex.Pattern;
 import net.sf.json.JSONObject;
 
 import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.StaplerRequest;
-
-import hudson.AbortException;
-import hudson.Extension;
-import hudson.FilePath;
-import hudson.Launcher;
-import hudson.Util;
-import hudson.model.AbstractBuild;
-import hudson.model.AbstractProject;
-import hudson.model.BuildListener;
-import hudson.model.Computer;
-import hudson.model.Node;
-import hudson.model.ParametersAction;
-import hudson.model.Run;
-import hudson.model.TaskListener;
-import hudson.plugins.tfs.actions.CheckoutAction;
-import hudson.plugins.tfs.actions.RemoveWorkspaceAction;
-import hudson.plugins.tfs.browsers.TeamFoundationServerRepositoryBrowser;
-import hudson.plugins.tfs.model.Project;
-import hudson.plugins.tfs.model.WorkspaceConfiguration;
-import hudson.plugins.tfs.model.Server;
-import hudson.plugins.tfs.model.ChangeSet;
-import hudson.plugins.tfs.util.BuildVariableResolver;
-import hudson.plugins.tfs.util.BuildWorkspaceConfigurationRetriever;
-import hudson.plugins.tfs.util.BuildWorkspaceConfigurationRetriever.BuildWorkspaceConfiguration;
-import hudson.scm.ChangeLogParser;
-import hudson.scm.RepositoryBrowsers;
-import hudson.scm.SCM;
-import hudson.scm.SCMDescriptor;
-import hudson.util.FormValidation;
-import hudson.util.LogTaskListener;
-import hudson.util.Scrambler;
 import org.kohsuke.stapler.QueryParameter;
+import org.kohsuke.stapler.StaplerRequest;
 
 /**
  * SCM for Microsoft Team Foundation Server.
  * 
  * @author Erik Ramfelt
+ * @author Nicolas DELOOF.
+ * @author Christophe UNVOAS
  */
 public class TeamFoundationServerScm extends SCM {
+  
+  private static final Logger LOGGER = Logger.getLogger(TeamFoundationServerScm.class.getName());
 
     public static final String WORKSPACE_ENV_STR = "TFS_WORKSPACE";
     public static final String WORKFOLDER_ENV_STR = "TFS_WORKFOLDER";
@@ -70,16 +75,18 @@ public class TeamFoundationServerScm extends SCM {
     private final String userPassword;
     private final String userName;
     private final boolean useUpdate;
+    private final String serverVersion;
+    private final String typeVersion;// T, D, C, L, W
+    private final String labelName;
     
+   
     private TeamFoundationServerRepositoryBrowser repositoryBrowser;
 
     private transient String normalizedWorkspaceName;
     private transient String workspaceChangesetVersion;
     
-    private static final Logger logger = Logger.getLogger(TeamFoundationServerScm.class.getName()); 
-
     @DataBoundConstructor
-    public TeamFoundationServerScm(String serverUrl, String projectPath, String localPath, boolean useUpdate, String workspaceName, String userName, String userPassword) {
+    public TeamFoundationServerScm(String serverUrl, String projectPath, String localPath, boolean useUpdate, String workspaceName, String userName, String userPassword, String serverVersion, String typeVersion, String labelName) {
         this.serverUrl = serverUrl;
         this.projectPath = projectPath;
         this.useUpdate = useUpdate;
@@ -87,6 +94,14 @@ public class TeamFoundationServerScm extends SCM {
         this.workspaceName = (Util.fixEmptyAndTrim(workspaceName) == null ? "Hudson-${JOB_NAME}-${NODE_NAME}" : workspaceName);
         this.userName = userName;
         this.userPassword = Scrambler.scramble(userPassword);
+        // Add version v2012 client have collection item 
+        this.serverVersion = serverVersion;
+        // Add latest version or label checkout
+        this.typeVersion = typeVersion;
+        this.labelName = labelName;
+        
+        LOGGER.log(Level.WARNING, "TypeVersion="+String.valueOf(getTypeVersion()));
+        LOGGER.log(Level.WARNING, "LabelName="+ getLabelName());
     }
 
     // Bean properties need for job configuration
@@ -116,7 +131,28 @@ public class TeamFoundationServerScm extends SCM {
 
     public String getUserName() {
         return userName;
-    }    
+    }  
+
+    /**
+     * @return the serverVersion
+     */
+    public String getServerVersion() {
+        return serverVersion;
+    }
+
+    /**
+     * @return the typeVersion
+     */
+    public String getTypeVersion() {
+      return typeVersion;
+    }
+
+    /**
+     * @return the labelName
+     */
+    public String getLabelName() {
+      return labelName;
+    }
     // Bean properties END
 
     String getWorkspaceName(AbstractBuild<?,?> build, Computer computer) {
@@ -148,8 +184,13 @@ public class TeamFoundationServerScm extends SCM {
         return text;
     }
     
+    /**
+     * @see hudson.scm.SCM#checkout(hudson.model.AbstractBuild, hudson.Launcher, hudson.FilePath, hudson.model.BuildListener, java.io.File)
+     */
     @Override
     public boolean checkout(AbstractBuild build, Launcher launcher, FilePath workspaceFilePath, BuildListener listener, File changelogFile) throws IOException, InterruptedException {
+      LOGGER.entering(this.getClass().getName(), "checkout");
+      
         Server server = createServer(new TfTool(getDescriptor().getTfExecutable(), launcher, listener, workspaceFilePath), build);
         WorkspaceConfiguration workspaceConfiguration = new WorkspaceConfiguration(server.getUrl(), getWorkspaceName(build, Computer.currentComputer()), getProjectPath(build), getLocalPath());
         
@@ -169,7 +210,17 @@ public class TeamFoundationServerScm extends SCM {
         build.addAction(workspaceConfiguration);
         CheckoutAction action = new CheckoutAction(workspaceConfiguration.getWorkspaceName(), workspaceConfiguration.getProjectPath(), workspaceConfiguration.getWorkfolder(), isUseUpdate());
         try {
-            List<ChangeSet> list = action.checkout(server, workspaceFilePath, (build.getPreviousBuild() != null ? build.getPreviousBuild().getTimestamp() : null), build.getTimestamp());
+          List<ChangeSet> list = null;
+          // checkout lastest or Label
+          LOGGER.log(Level.WARNING, "TypeVersion="+String.valueOf(getTypeVersion()));
+          LOGGER.log(Level.WARNING, "LabelName="+ getLabelName());
+          
+          if (getTypeVersion()==null || ServerConfigurationProvider.VERSION_LATEST.equals(getTypeVersion())) {
+            list = action.checkout(server, workspaceFilePath, (build.getPreviousBuild() != null ? build.getPreviousBuild().getTimestamp() : null), build.getTimestamp());
+          } else {
+            list = action.checkout(server, workspaceFilePath, getTypeVersion(), getLabelName());
+          }
+          
             ChangeSetWriter writer = new ChangeSetWriter();
             writer.write(list, changelogFile);
         } catch (ParseException pe) {
@@ -196,6 +247,9 @@ public class TeamFoundationServerScm extends SCM {
         this.workspaceChangesetVersion = workspaceChangesetVersion;
     }
 
+    /**
+     * @see hudson.scm.SCM#pollChanges(hudson.model.AbstractProject, hudson.Launcher, hudson.FilePath, hudson.model.TaskListener)
+     */
     @Override
     public boolean pollChanges(AbstractProject hudsonProject, Launcher launcher, FilePath workspace, TaskListener listener) throws IOException, InterruptedException {
         Run<?,?> lastRun = hudsonProject.getLastBuild();
@@ -215,6 +269,9 @@ public class TeamFoundationServerScm extends SCM {
         }
     }
     
+    /**
+     * @see hudson.scm.SCM#processWorkspaceBeforeDeletion(hudson.model.AbstractProject, hudson.FilePath, hudson.model.Node)
+     */
     @Override
     public boolean processWorkspaceBeforeDeletion(AbstractProject<?, ?> project, FilePath workspace, Node node) throws IOException, InterruptedException {
         Run<?,?> lastRun = project.getLastBuild();
@@ -232,7 +289,7 @@ public class TeamFoundationServerScm extends SCM {
                     node = buildNode;
                 } else {
                     if (!buildNode.getNodeName().equals(node.getNodeName())) {
-                        logger.warning("Could not wipe out workspace as there is no way of telling what Node the request is for. Please upgrade Hudson to a newer version.");
+                        LOGGER.warning("Could not wipe out workspace as there is no way of telling what Node the request is for. Please upgrade Hudson to a newer version.");
                         return false;
                     }
                 }                
@@ -246,7 +303,7 @@ public class TeamFoundationServerScm extends SCM {
         
         BuildWorkspaceConfiguration configuration = new BuildWorkspaceConfigurationRetriever().getLatestForNode(node, lastRun);
         if ((configuration != null) && configuration.workspaceExists()) {
-            LogTaskListener listener = new LogTaskListener(logger, Level.INFO);
+            LogTaskListener listener = new LogTaskListener(LOGGER, Level.INFO);
             Launcher launcher = node.createLauncher(listener);        
             Server server = createServer(new TfTool(getDescriptor().getTfExecutable(), launcher, listener, workspace), lastRun);
             if (new RemoveWorkspaceAction(configuration.getWorkspaceName()).remove(server)) {
@@ -258,34 +315,52 @@ public class TeamFoundationServerScm extends SCM {
     }
     
     protected Server createServer(TfTool tool, Run<?,?> run) {
-        return new Server(tool, getServerUrl(run), getUserName(), getUserPassword());
+        return new Server(tool, getServerUrl(run), getUserName(), getUserPassword(), getServerVersion(), getTypeVersion(), getLabelName());
     }
 
+    /**
+     * @see hudson.scm.SCM#requiresWorkspaceForPolling()
+     */
     @Override
     public boolean requiresWorkspaceForPolling() {
         return true;
     }
 
+    /**
+     * @see hudson.scm.SCM#supportsPolling()
+     */
     @Override
     public boolean supportsPolling() {
         return true;
     }
 
+    /**
+     * @see hudson.scm.SCM#createChangeLogParser()
+     */
     @Override
     public ChangeLogParser createChangeLogParser() {
         return new ChangeSetReader();
     }
 
+    /**
+     * @see hudson.scm.SCM#getModuleRoot(hudson.FilePath)
+     */
     @Override
     public FilePath getModuleRoot(FilePath workspace) {
         return workspace.child(getLocalPath());
     }
 
+    /**
+     * @see hudson.scm.SCM#getBrowser()
+     */
     @Override
     public TeamFoundationServerRepositoryBrowser getBrowser() {
         return repositoryBrowser;
     }
 
+    /**
+     * @see hudson.scm.SCM#buildEnvVars(hudson.model.AbstractBuild, java.util.Map)
+     */
     @Override
     public void buildEnvVars(AbstractBuild build, Map<String, String> env) {
         super.buildEnvVars(build, env);
@@ -309,6 +384,9 @@ public class TeamFoundationServerScm extends SCM {
         }
     }
 
+    /**
+     * @see hudson.scm.SCM#getDescriptor()
+     */
     @Override
     public DescriptorImpl getDescriptor() {
         return (DescriptorImpl)super.getDescriptor();
@@ -336,6 +414,27 @@ public class TeamFoundationServerScm extends SCM {
             }
         }
         
+        public ListBoxModel doFillServerVersionItems() {
+          ListBoxModel items = new ListBoxModel();
+          items.add("TEE-CLC-10.x", ServerConfigurationProvider.TFS_TEE_CLC_10);
+          items.add("TEE-CLC-11.x +", ServerConfigurationProvider.TFS_TEE_CLC_11);
+          return items;
+      }
+
+        
+        public ListBoxModel doFillTypeVersionItems() {
+          ListBoxModel items = new ListBoxModel();
+          items.add("Latest version", ServerConfigurationProvider.VERSION_LATEST);
+          items.add("Label (Label name)", ServerConfigurationProvider.VERSION_LABEL);
+          items.add("Commit (Commit number)", ServerConfigurationProvider.VERSION_COMMIT);
+          items.add("Date (MM/DD/YYYY)", ServerConfigurationProvider.VERSION_DATE);
+          items.add("Workspace (Workspace;Owner)", ServerConfigurationProvider.VERSION_WORKSPACE);
+          return items;
+      }
+        
+        /**
+         * @see hudson.model.Descriptor#newInstance(org.kohsuke.stapler.StaplerRequest, net.sf.json.JSONObject)
+         */
         @Override
         public SCM newInstance(StaplerRequest req, JSONObject formData) throws FormException {
             TeamFoundationServerScm scm = (TeamFoundationServerScm) super.newInstance(req, formData);
@@ -382,6 +481,9 @@ public class TeamFoundationServerScm extends SCM {
                     "Workspace name is mandatory", value);
         }
         
+        /**
+         * @see hudson.model.Descriptor#configure(org.kohsuke.stapler.StaplerRequest, net.sf.json.JSONObject)
+         */
         @Override
         public boolean configure(StaplerRequest req, JSONObject formData) throws FormException {
             tfExecutable = Util.fixEmpty(req.getParameter("tfs.tfExecutable").trim());
@@ -389,6 +491,9 @@ public class TeamFoundationServerScm extends SCM {
             return true;
         }
 
+        /**
+         * @see hudson.model.Descriptor#getDisplayName()
+         */
         @Override
         public String getDisplayName() {
             return "Team Foundation Server";

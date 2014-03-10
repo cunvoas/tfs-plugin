@@ -3,6 +3,10 @@
         <f:textbox name="tfs.serverUrl" value="${scm.serverUrl}"
              clazz="required" checkMessage="${%Server URL is mandatory.}"/>
     </f:entry>
+   
+    <f:entry field="serverVersion" title="Server Version" help="/plugin/server-version.html">
+       <f:select />
+    </f:entry>
     
     <f:entry title="Project path" help="/plugin/tfs/project.html">
         <f:textbox name="tfs.projectPath" value="${scm.projectPath}"
@@ -18,6 +22,24 @@
     <f:entry title="User password">
         <input type="password" class="setting-input" name="tfs.userPassword" value="${scm.userPassword}"/>
     </f:entry>
+    
+    
+    <f:entry field="typeVersion" title="Get version mode" help="/plugin/get-option.html">
+       <f:select />
+    </f:entry>
+    
+<!--
+    <f:entry title="Get version mode">
+        <f:radio name="tfs.typeVersion" title="Latest version" checked="${h.defaultToTrue(scm.typeVersion == 'T')}" value="T" />
+        <f:radio name="tfs.typeVersion" title="Label (Label name)" checked="${scm.typeVersion == 'L'}"  value="L" />
+        <f:radio name="tfs.typeVersion" title="Date (MM/DD/YYYY)" checked="${scm.typeVersion == 'D'}"  value="D" />
+        <f:radio name="tfs.typeVersion" title="Commit (Commit number)" checked="${scm.typeVersion == 'C'}"  value="C" />
+        <f:radio name="tfs.typeVersion" title="Workspace (Workspace;Owner)" checked="${scm.typeVersion == 'W'}"  value="W" />
+    </f:entry>
+-->
+   <f:entry title="Label Name" help="/plugin/label-option.html">
+     <f:textbox name="tfs.labelName" value="${scm.labelName}" />
+   </f:entry>
 
     <f:advanced>
 

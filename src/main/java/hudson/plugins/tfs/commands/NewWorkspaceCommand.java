@@ -12,13 +12,26 @@ public class NewWorkspaceCommand extends AbstractCommand {
     }
 
     public MaskedArgumentListBuilder getArguments() {
+        ServerConfigurationProvider config = super.getConfig();
+        
         MaskedArgumentListBuilder arguments = new MaskedArgumentListBuilder();        
         arguments.add("workspace");
         arguments.add("-new");
-        arguments.add(String.format("%s;%s", workspaceName, getConfig().getUserName()));
-        arguments.add("-noprompt");
-        addServerArgument(arguments);
-        addLoginArgument(arguments);
+        
+        // on TFS 2010 server is replaced by collection and the order change
+        if (ServerConfigurationProvider.TFS_TEE_CLC_11.equals(config.getVersion())) {
+            addServerArgument(arguments);
+            arguments.add(String.format("%s;%s", workspaceName, getConfig().getUserName()));
+            addLoginArgument(arguments);
+            arguments.add("-noprompt");
+            
+        } else {
+            arguments.add(String.format("%s;%s", workspaceName, getConfig().getUserName()));
+            arguments.add("-noprompt");
+            addServerArgument(arguments);
+            addLoginArgument(arguments);
+        }
+        
         return arguments;
     }
 }

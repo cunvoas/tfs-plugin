@@ -13,7 +13,11 @@ public abstract class AbstractCommand implements Command {
     }
 
     protected void addServerArgument(ArgumentListBuilder arguments) {
-        arguments.add(String.format("-server:%s", config.getUrl()));
+        if (ServerConfigurationProvider.TFS_TEE_CLC_11.equals(config.getVersion())) {
+            arguments.add(String.format("-collection:%s", config.getUrl()));
+        } else {
+            arguments.add(String.format("-server:%s", config.getUrl()));
+        }
     }
     
     protected void addLoginArgument(MaskedArgumentListBuilder arguments) {
